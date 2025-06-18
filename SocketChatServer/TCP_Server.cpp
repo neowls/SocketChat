@@ -25,14 +25,25 @@ const char* EXIT_SIGNAL = "__EXIT__";
 
 void handle_input(const std::string& token)
 {
-	SOCKET input_sock, output_sock;
+	SOCKET input_sock;
 	std::string nickname;
 	{
 		std::lock_guard<std::mutex> lock(global_mutex);
 		input_sock = tokenToClient[token].input;
-		output_sock = tokenToClient[token].output;
 		nickname = tokenToClient[token].nickname;
 	}
+
+	// (1) output_sock이 연결될 때까지 대기
+	SOCKET output_sock = INVALID_SOCKET;
+	while (output_sock == INVALID_SOCKET) {
+		{
+			std::lock_guard<std::mutex> lock(global_mutex);
+			output_sock = tokenToClient[token].output;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 50ms 대기
+	}
+
+	std::cout << "[" << nickname << "] 클라이언트 접속" << std::endl;
 
 	char buf[1024];
 	while (true)
@@ -53,9 +64,16 @@ void handle_input(const std::string& token)
 				break;
 			}
 
-			if (output_sock != INVALID_SOCKET)
 			{
-				send(output_sock, msg.c_str(), static_cast<int>(msg.size()), 0);
+				std::lock_guard<std::mutex> lock(global_mutex);
+				for (auto& client : tokenToClient) 
+				{
+					if (client.second.output != INVALID_SOCKET) 
+					{
+						send(client.second.output, msg.c_str(), static_cast<int>(msg.size()), 0);
+					}
+				}
+				std::cout << msg << std::endl;
 			}
 		}
 		else
@@ -69,6 +87,7 @@ void handle_input(const std::string& token)
 		}
 	}
 	closesocket(input_sock);
+	std::cout << "[" << nickname << "] 클라이언트 종료" << std::endl;
 
 	std::lock_guard<std::mutex> lock(global_mutex);
 	tokenToClient.erase(token);
@@ -83,6 +102,7 @@ void handle_output(const std::string& token)
 		input_sock = tokenToClient[token].input;
 		output_sock = tokenToClient[token].output;
 	}
+
 
 	char buf[1024];
 	while (true)
